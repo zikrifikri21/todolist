@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TaskFlow — Todo App</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<div class="app-wrap">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-badge">✦ Task Manager</div>
+    <h1>Task<span>Flow</span></h1>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-bar" id="statsBar">
+    <div class="stat-pill"><span class="stat-dot"></span> Total: <b id="statTotal">0</b></div>
+    <div class="stat-pill"><span class="stat-dot purple"></span> Selesai: <b id="statDone">0</b></div>
+    <div class="stat-pill"><span class="stat-dot orange"></span> Deadline Dekat: <b id="statNear">0</b></div>
+  </div>
+
+  <!-- Add Form -->
+  <div class="add-card">
+    <div class="add-row">
+      <input type="text" class="add-input" id="taskInput" placeholder="Tambah tugas baru…" autocomplete="off" />
+      <button class="add-btn" id="addBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Tambah
+      </button>
+    </div>
+    <div class="optional-row" style="margin-top:0.9rem;">
+      <div style="flex:1;min-width:140px;">
+        <div class="opt-label">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Deadline (opsional)
+        </div>
+        <input type="datetime-local" class="opt-input" id="deadlineInput" style="width:100%" />
+      </div>
+      <div>
+        <div class="opt-label">Prioritas</div>
+        <select class="priority-select" id="priorityInput">
+          <option value="normal">— Normal</option>
+          <option value="low">↓ Rendah</option>
+          <option value="medium">→ Sedang</option>
+          <option value="high">↑ Tinggi</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="filter-row" id="filterRow">
+    <button class="filter-btn active" data-filter="all">Semua</button>
+    <button class="filter-btn" data-filter="active">Aktif</button>
+    <button class="filter-btn" data-filter="done">Selesai</button>
+    <button class="filter-btn" data-filter="near">Deadline Dekat</button>
+  </div>
+
+  <!-- Todo list -->
+  <div class="todo-list" id="todoList">
+    <div class="empty-state">
+      <div class="icon">📋</div>
+      <p>Belum ada tugas.<br>Tambahkan tugas pertamamu!</p>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay" id="editModal" style="display:none;">
+  <div class="modal">
+    <h3>✏️ Edit Tugas</h3>
+    <div class="modal-field">
+      <div class="modal-label">Judul Tugas</div>
+      <input type="text" class="add-input" id="editTitle" style="width:100%" />
+    </div>
+    <div class="modal-field">
+      <div class="modal-label">Deadline (opsional)</div>
+      <input type="datetime-local" class="opt-input" id="editDeadline" style="width:100%" />
+    </div>
+    <div class="modal-field">
+      <div class="modal-label">Prioritas</div>
+      <select class="priority-select" id="editPriority" style="width:100%">
+        <option value="normal">— Normal</option>
+        <option value="low">↓ Rendah</option>
+        <option value="medium">→ Sedang</option>
+        <option value="high">↑ Tinggi</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="cancelEdit">Batal</button>
+      <button class="btn-save" id="saveEdit">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<script>
+$(function () {
+  /* ========== STATE ========== */
+  let todos = JSON.parse(localStorage.getItem('taskflow_todos') || '[]');
+  let currentFilter = 'all';
+  let editId = null;
+  const notifiedIds = new Set(JSON.parse(localStorage.getItem('taskflow_notified') || '[]'));
+
+  /* ========== HELPERS ========== */
+  function save() {
+    localStorage.setItem('taskflow_todos', JSON.stringify(todos));
+  }
+  function saveNotified() {
+    localStorage.setItem('taskflow_notified', JSON.stringify([...notifiedIds]));
+  }
+  function genId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2);
+  }
+  function deadlineStatus(deadline) {
+    if (!deadline) return null;
+    const now = Date.now();
+    const dl = new Date(deadline).getTime();
+    if (dl < now) return 'passed';
+    if (dl - now < 24 * 3600 * 1000) return 'near';
+    return 'ok';
+  }
+  function formatDeadline(deadline) {
+    if (!deadline) return '';
+    const d = new Date(deadline);
+    return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) +
+      ' ' + d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  }
+  function timeLeft(deadline) {
+    const diff = new Date(deadline).getTime() - Date.now();
+    if (diff < 0) {
+      const past = Math.abs(diff);
+      const h = Math.floor(past / 3600000);
+      const m = Math.floor((past % 3600000) / 60000);
+      return h > 0 ? `${h}j ${m}m lalu` : `${m}m lalu`;
+    }
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    if (h >= 24) return `${Math.floor(h/24)}h lagi`;
+    return h > 0 ? `${h}j ${m}m lagi` : `${m}m lagi`;
+  }
+
+  /* ========== TOAST ========== */
+  function showToast(title, body, type = '') {
+    const icons = { warn: '⚠️', danger: '🔴', '': '✅' };
+    const id = genId();
+    const $t = $(`
+      <div class="toast ${type}" id="t-${id}">
+        <span class="toast-icon">${icons[type] || '🔔'}</span>
+        <div class="toast-text">
+          <div class="toast-title">${title}</div>
+          <div class="toast-body">${body}</div>
+        </div>
+        <button class="toast-close">✕</button>
+      </div>
+    `);
+    $t.find('.toast-close').on('click', () => $t.fadeOut(200, () => $t.remove()));
+    $('#toastWrap').append($t);
+    setTimeout(() => $t.fadeOut(400, () => $t.remove()), 5500);
+  }
+
+  /* ========== RENDER ========== */
+  function getFiltered() {
+    switch (currentFilter) {
+      case 'active': return todos.filter(t => !t.done);
+      case 'done': return todos.filter(t => t.done);
+      case 'near': return todos.filter(t => !t.done && deadlineStatus(t.deadline) === 'near');
+      default: return todos;
+    }
+  }
+
+  function updateStats() {
+    const total = todos.length;
+    const done = todos.filter(t => t.done).length;
+    const near = todos.filter(t => !t.done && deadlineStatus(t.deadline) !== null && deadlineStatus(t.deadline) !== 'ok').length;
+    $('#statTotal').text(total);
+    $('#statDone').text(done);
+    $('#statNear').text(near);
+  }
+
+  function render() {
+    const list = getFiltered();
+    const $list = $('#todoList');
+    $list.empty();
+
+    if (list.length === 0) {
+      const msgs = {
+        all: 'Belum ada tugas.<br>Tambahkan tugas pertamamu!',
+        active: 'Tidak ada tugas aktif.',
+        done: 'Belum ada tugas yang selesai.',
+        near: 'Tidak ada tugas dengan deadline dekat.'
+      };
+      $list.html(`<div class="empty-state"><div class="icon">📋</div><p>${msgs[currentFilter]}</p></div>`);
+      updateStats();
+      return;
+    }
+
+    list.forEach(todo => {
+      const ds = deadlineStatus(todo.deadline);
+      const priorityClass = todo.priority !== 'normal' ? `priority-${todo.priority}` : '';
+      const deadlineClass = ds === 'near' ? 'deadline-near' : ds === 'passed' ? 'deadline-passed' : '';
+
+      let dlHtml = '';
+      if (todo.deadline) {
+        const dlCls = ds === 'ok' ? 'ok' : ds === 'near' ? 'near' : 'passed';
+        const dlIcon = ds === 'ok' ? '🕐' : ds === 'near' ? '⚡' : '🔴';
+        dlHtml = `<span class="deadline-tag ${dlCls}">${dlIcon} ${formatDeadline(todo.deadline)} · ${timeLeft(todo.deadline)}</span>`;
+      }
+
+      let prioHtml = '';
+      if (todo.priority !== 'normal') {
+        const labels = { high: 'Tinggi', medium: 'Sedang', low: 'Rendah' };
+        prioHtml = `<span class="meta-tag tag-priority-${todo.priority}">${labels[todo.priority]}</span>`;
+      }
+
+      const $item = $(`
+        <div class="todo-item ${priorityClass} ${deadlineClass} ${todo.done ? 'done' : ''}" data-id="${todo.id}">
+          <div class="todo-check ${todo.done ? 'checked' : ''}" data-id="${todo.id}"></div>
+          <div class="todo-body">
+            <div class="todo-title">${$('<div>').text(todo.title).html()}</div>
+            <div class="todo-meta">
+              ${prioHtml}
+              ${dlHtml}
+            </div>
+          </div>
+          <div class="todo-actions">
+            <button class="action-btn edit" data-id="${todo.id}" title="Edit">✏️</button>
+            <button class="action-btn del" data-id="${todo.id}" title="Hapus">🗑</button>
+          </div>
+        </div>
+      `);
+      $list.append($item);
+    });
+
+    updateStats();
+  }
+
+  /* ========== ADD ========== */
+  function addTodo() {
+    const title = $('#taskInput').val().trim();
+    if (!title) {
+      $('#taskInput').focus();
+      showToast('Judul kosong!', 'Masukkan judul tugas terlebih dahulu.', 'warn');
+      return;
+    }
+    const deadline = $('#deadlineInput').val() || null;
+    const priority = $('#priorityInput').val();
+
+    todos.unshift({ id: genId(), title, deadline, priority, done: false, createdAt: Date.now() });
+    save();
+    $('#taskInput').val('');
+    $('#deadlineInput').val('');
+    $('#priorityInput').val('normal');
+    render();
+    showToast('Tugas ditambahkan!', title);
+  }
+
+  $('#addBtn').on('click', addTodo);
+  $('#taskInput').on('keydown', e => { if (e.key === 'Enter') addTodo(); });
+
+  /* ========== TOGGLE DONE ========== */
+  $(document).on('click', '.todo-check', function () {
+    const id = $(this).data('id');
+    const todo = todos.find(t => t.id == id);
+    if (todo) {
+      todo.done = !todo.done;
+      save();
+      render();
+      if (todo.done) showToast('Selesai! 🎉', todo.title);
+    }
+  });
+
+  /* ========== DELETE ========== */
+  $(document).on('click', '.action-btn.del', function () {
+    const id = $(this).data('id');
+    const todo = todos.find(t => t.id == id);
+    if (todo) {
+      todos = todos.filter(t => t.id != id);
+      save();
+      render();
+      showToast('Tugas dihapus', todo.title, 'warn');
+    }
+  });
+
+  /* ========== EDIT ========== */
+  $(document).on('click', '.action-btn.edit', function () {
+    const id = $(this).data('id');
+    const todo = todos.find(t => t.id == id);
+    if (!todo) return;
+    editId = id;
+    $('#editTitle').val(todo.title);
+    $('#editDeadline').val(todo.deadline ? todo.deadline.slice(0, 16) : '');
+    $('#editPriority').val(todo.priority);
+    $('#editModal').fadeIn(150);
+    $('#editTitle').focus();
+  });
+
+  $('#cancelEdit').on('click', () => { editId = null; $('#editModal').fadeOut(150); });
+  $('#editModal').on('click', function (e) { if ($(e.target).is('#editModal')) { editId = null; $(this).fadeOut(150); } });
+
+  $('#saveEdit').on('click', function () {
+    if (!editId) return;
+    const todo = todos.find(t => t.id == editId);
+    if (!todo) return;
+    const title = $('#editTitle').val().trim();
+    if (!title) { showToast('Judul kosong!', 'Masukkan judul tugas.', 'warn'); return; }
+    todo.title = title;
+    todo.deadline = $('#editDeadline').val() || null;
+    todo.priority = $('#editPriority').val();
+    save();
+    render();
+    $('#editModal').fadeOut(150);
+    editId = null;
+    showToast('Tugas diperbarui!', title);
+  });
+
+  /* ========== FILTER ========== */
+  $('#filterRow').on('click', '.filter-btn', function () {
+    currentFilter = $(this).data('filter');
+    $('.filter-btn').removeClass('active');
+    $(this).addClass('active');
+    render();
+  });
+
+  /* ========== DEADLINE NOTIF ========== */
+  function checkDeadlines() {
+    const now = Date.now();
+    todos.filter(t => !t.done && t.deadline).forEach(todo => {
+      const dl = new Date(todo.deadline).getTime();
+      const diff = dl - now;
+
+      // Passed deadline
+      if (diff < 0 && diff > -60000) {
+        const key = `${todo.id}_passed`;
+        if (!notifiedIds.has(key)) {
+          notifiedIds.add(key);
+          saveNotified();
+          showToast('Deadline Terlewat!', `"${todo.title}" sudah melewati batas waktu.`, 'danger');
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('⏰ Deadline Terlewat!', { body: todo.title, icon: '' });
+          }
+        }
+      }
+      // 1 hour warning
+      if (diff > 0 && diff < 3600000) {
+        const key = `${todo.id}_1h`;
+        if (!notifiedIds.has(key)) {
+          notifiedIds.add(key);
+          saveNotified();
+          const m = Math.round(diff / 60000);
+          showToast('Deadline Dekat! ⚡', `"${todo.title}" — ${m} menit lagi.`, 'warn');
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('⚡ Deadline Dekat!', { body: `${todo.title} — ${m} menit lagi`, icon: '' });
+          }
+        }
+      }
+      if (diff > 0 && diff < 86400000 && diff > 3600000) {
+        const key = `${todo.id}_24h`;
+        if (!notifiedIds.has(key)) {
+          notifiedIds.add(key);
+          saveNotified();
+          const h = Math.round(diff / 3600000);
+          showToast('Pengingat Deadline', `"${todo.title}" — ${h} jam lagi.`, 'warn');
+        }
+      }
+    });
+
+    render();
+  }
+
+  /* ========== REQUEST NOTIF PERMISSION ========== */
+  if ('Notification' in window && Notification.permission === 'default') {
+    setTimeout(() => {
+      Notification.requestPermission().then(p => {
+        if (p === 'granted') showToast('Notifikasi Aktif 🔔', 'Kamu akan dapat pengingat deadline browser.');
+      });
+    }, 2000);
+  }
+
+  /* ========== INIT ========== */
+  render();
+  checkDeadlines();
+  setInterval(checkDeadlines, 60000);
+});
+</script>
+</body>
+</html>
